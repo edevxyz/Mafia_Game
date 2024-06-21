@@ -1,87 +1,106 @@
-//SPDX-License-Identifier: MIT
-pragma solidity >=0.8.0 <0.9.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-// Useful for debugging. Remove when deploying to a live network.
-import "hardhat/console.sol";
+contract Mafia {
+    enum Role { None, Assassin, Policeman, Civilian }
+    
+    struct Player {
+        address wallet;
+        Role role;
+        bool isAlive;
+    }
 
-// Use openzeppelin to inherit battle-tested implementations (ERC20, ERC721, etc)
-// import "@openzeppelin/contracts/access/Ownable.sol";
+    Player[4] public players;
+    mapping(address => uint) public playerIds;
+    uint public assassinId;
+    uint public policemanId;
 
-/**
- * A smart contract that allows changing a state variable of the contract and tracking the changes
- * It also allows the owner to withdraw the Ether in the contract
- * @author BuidlGuidl
- */
-contract YourContract {
-	// State Variables
-	address public immutable owner;
-	string public greeting = "Building Unstoppable Apps!!!";
-	bool public premium = false;
-	uint256 public totalCounter = 0;
-	mapping(address => uint) public userGreetingCounter;
+    uint[4] public votes;
+    bool public votingOpen;
+    
+    event RoleAssigned(address indexed player, Role role);
+    event Voted(address indexed voter, uint targetId);
+    event Executed(uint targetId);
 
-	// Events: a way to emit log statements from smart contract that can be listened to by external parties
-	event GreetingChange(
-		address indexed greetingSetter,
-		string newGreeting,
-		bool premium,
-		uint256 value
-	);
+    // Function to assign roles to players
+    function assignRoles(address[4] memory _players) public {
+        // Check if roles have already been assigned
+        require(players[0].wallet == address(0), "Roles already assigned");
 
-	// Constructor: Called once on contract deployment
-	// Check packages/hardhat/deploy/00_deploy_your_contract.ts
-	constructor(address _owner) {
-		owner = _owner;
-	}
+        // Assign roles to each player
+        players[0] = Player(_players[0], Role.Assassin, true);
+        players[1] = Player(_players[1], Role.Policeman, true);
+        players[2] = Player(_players[2], Role.Civilian, true);
+        players[3] = Player(_players[3], Role.Civilian, true);
 
-	// Modifier: used to define a set of rules that must be met before or after a function is executed
-	// Check the withdraw() function
-	modifier isOwner() {
-		// msg.sender: predefined variable that represents address of the account that called the current function
-		require(msg.sender == owner, "Not the Owner");
-		_;
-	}
+        // Store player details and emit RoleAssigned event
+        for (uint i = 0; i < 4; i++) {
+            playerIds[_players[i]] = i; // Map player's address to their ID
+            emit RoleAssigned(_players[i], players[i].role); // Emit event for role assignment
+        }
 
-	/**
-	 * Function that allows anyone to change the state variable "greeting" of the contract and increase the counters
-	 *
-	 * @param _newGreeting (string memory) - new greeting to save on the contract
-	 */
-	function setGreeting(string memory _newGreeting) public payable {
-		// Print data to the hardhat chain console. Remove when deploying to a live network.
-		console.log(
-			"Setting new greeting '%s' from %s",
-			_newGreeting,
-			msg.sender
-		);
+        // Set IDs for special roles
+        assassinId = 0; // ID for Assassin
+        policemanId = 1; // ID for Policeman
+        votingOpen = false; // Initialize voting status
+    }
 
-		// Change state variables
-		greeting = _newGreeting;
-		totalCounter += 1;
-		userGreetingCounter[msg.sender] += 1;
+    // Function for the Assassin to perform an action
+    function performAssassinAction(uint targetId) public {
+        require(playerIds[msg.sender] == assassinId, "Only assassin can perform this action");
+        require(targetId != assassinId, "Cannot target self");
+        require(players[targetId].isAlive, "Target must be alive");
 
-		// msg.value: built-in global variable that represents the amount of ether sent with the transaction
-		if (msg.value > 0) {
-			premium = true;
-		} else {
-			premium = false;
-		}
+        // Mark the target player as dead
+        players[targetId].isAlive = false;
+    }
 
-		// emit: keyword used to trigger an event
-		emit GreetingChange(msg.sender, _newGreeting, msg.value > 0, msg.value);
-	}
+    // Function to start voting
+    function startVoting() public {
+        require(!votingOpen, "Voting is already open");
+        votingOpen = true; // Open the voting round
+    }
 
-	/**
-	 * Function that allows the owner to withdraw all the Ether in the contract
-	 * The function can only be called by the owner of the contract as defined by the isOwner modifier
-	 */
-	function withdraw() public isOwner {
-		(bool success, ) = owner.call{ value: address(this).balance }("");
-		require(success, "Failed to send Ether");
-	}
+    // Function to vote for a player to be executed
+    function vote(uint targetId) public {
+        require(votingOpen, "Voting is not open"); // Check if voting is open
+        uint voterId = playerIds[msg.sender];
+        require(players[voterId].isAlive, "You must be alive to vote"); // Check if voter is alive
+        require(players[targetId].isAlive, "Target must be alive"); // Check if target is alive
 
-	/**
-	 * Function that allows the contract to receive ETH
-	 */
-	receive() external payable {}
+        votes[targetId] += 1; // Increment the vote count for the target
+        emit Voted(msg.sender, targetId); // Emit a Voted event
+    }
+
+    // Function to end voting and execute the player with most votes
+    function endVoting() public {
+        require(votingOpen, "Voting is not open");
+        votingOpen = false; // Close the voting round
+
+        // Determine the player with the most votes
+        uint maxVotes = 0;
+        uint maxVotedId = 0;
+        bool tie = false;
+
+        for (uint i = 0; i < 4; i++) {
+            if (votes[i] > maxVotes) {
+                maxVotes = votes[i];
+                maxVotedId = i;
+                tie = false; // Reset tie flag when a new max is found
+            } else if (votes[i] == maxVotes && maxVotes > 0) {
+                tie = true; // Set tie flag if another player has the same max votes
+            }
+        }
+
+        // Handle tie scenario (for simplicity, no one is executed in case of a tie)
+        if (!tie && maxVotes > 0) {
+            players[maxVotedId].isAlive = false; // Mark the player with most votes as dead
+            emit Executed(maxVotedId); // Emit an Executed event
+        }
+
+        // Reset votes for next round
+        for (uint i = 0; i < 4; i++) {
+            votes[i] = 0;
+        }
+    }
 }
